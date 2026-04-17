@@ -23,9 +23,12 @@
         commonArgs = {
           inherit src;
           strictDeps = true;
+          nativeBuildInputs = [ pkgs.pkg-config ];
           buildInputs = pkgs.lib.optionals pkgs.stdenv.isDarwin [
             pkgs.apple-sdk
             pkgs.libiconv
+          ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+            pkgs.openssl
           ];
         };
 
