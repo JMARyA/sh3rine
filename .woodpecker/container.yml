@@ -1,0 +1,22 @@
+matrix:
+  platform:
+    - linux/amd64
+    - linux/arm64
+
+labels:
+  platform: ${platform}
+
+when:
+  - event: push
+    branch: main
+
+steps:
+  - name: "Build & Push Container"
+    image: git.hydrar.de/hydra/nix-build:latest
+    settings:
+      PACKAGE: dockerImage
+      IS_CONTAINER: true
+      REGISTRY_URL: hcr.hydrar.de
+      REGISTRY_USER: jmarya
+      REGISTRY_PASS:
+        from_secret: registry_token
