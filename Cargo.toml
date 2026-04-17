@@ -1,0 +1,16 @@
+[package]
+name = "sh3rine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+axum = "0.7"
+reqwest = { version = "0.12", features = ["stream"] }
+moka = { version = "0.12", features = ["future"] }
+regex = "1"
+mime_guess = "2"
+infer = "0.16"
+bytes = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
