@@ -44,11 +44,17 @@
           name = "sh3rine";
           tag = "latest";
           contents = [ sh3rine pkgs.cacert ];
+          fakeRootCommands = ''
+            mkdir -p etc/ssl
+            ln -s ${pkgs.cacert}/etc/ssl/certs etc/ssl/certs
+          '';
           config = {
             Cmd = [ "${sh3rine}/bin/sh3rine" ];
             Env = [
               "RUST_LOG=info"
               "LISTEN=0.0.0.0:8080"
+              "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+              "NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
             ];
             ExposedPorts = { "8080/tcp" = {}; };
           };
