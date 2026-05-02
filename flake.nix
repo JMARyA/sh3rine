@@ -88,57 +88,5 @@
           packages = [ pkgs.rust-analyzer ];
         };
       }
-    ))
-    // {
-      moiraPipelines = {
-        ci = {
-          trigger = {
-            on_push.branches = [ "main" ];
-            on_pr.target = [ "main" ];
-          };
-          sandbox_defaults.network = false;
-          vars = {
-            RUST_BACKTRACE = "1";
-            CARGO_TERM_COLOR = "always";
-          };
-          steps = [
-            {
-              name = "check";
-              env = ./.moira/envs/rust.nix;
-              run = "cargo check --workspace";
-            }
-            {
-              name = "test";
-              env = ./.moira/envs/rust.nix;
-              run = "cargo test --workspace";
-              depends_on = [ "check" ];
-            }
-          ];
-        };
-        publish = {
-          trigger = {
-            on_push.branches = [ "main" ];
-            manual = true;
-          };
-          needs_flake = [ "packages.dockerImage" ];
-          env = ./.moira/envs/publish.nix;
-          steps = [
-            {
-              name = "push-image";
-              run = ''
-                skopeo copy \
-                  --dest-creds "$REGISTRY_USER:$REGISTRY_PASS" \
-                  docker-archive:''${{ flake.packages.dockerImage }} \
-                  docker://git.hydrar.de/jmarya/sh3rine:latest
-              '';
-              sandbox.network = true;
-              secrets = [
-                "REGISTRY_USER"
-                "REGISTRY_PASS"
-              ];
-            }
-          ];
-        };
-      };
-    };
+    ));
 }

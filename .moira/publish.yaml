@@ -1,0 +1,23 @@
+name: publish
+
+trigger:
+  on_push:
+    branches: [main]
+  manual: true
+
+needs_flake:
+  - packages.dockerImage
+
+steps:
+  - name: push-image
+    env: .moira/envs/publish.nix
+    run: |
+      skopeo copy \
+        --dest-creds "$REGISTRY_USER:$REGISTRY_PASS" \
+        docker-archive:${{ flake.packages.dockerImage }} \
+        docker://git.hydrar.de/jmarya/sh3rine:latest
+    network: true
+    secrets:
+      - REGISTRY_USER
+      - REGISTRY_PASS
+    timeout: 10m

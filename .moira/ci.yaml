@@ -1,0 +1,24 @@
+name: ci
+
+trigger:
+  on_push:
+    branches: [main]
+  on_pr:
+    target: [main]
+
+sandbox_defaults:
+  network: false
+
+vars:
+  RUST_BACKTRACE: "1"
+  CARGO_TERM_COLOR: always
+
+steps:
+  - name: check
+    env: .moira/envs/rust.nix
+    run: cargo check --workspace
+
+  - name: test
+    env: .moira/envs/rust.nix
+    run: cargo test --workspace
+    depends_on: [check]
