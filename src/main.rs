@@ -5,7 +5,7 @@ use std::{sync::Arc, time::Duration};
 
 use axum::{
     body::Body,
-    extract::{Host, Request, State},
+    extract::{Request, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
@@ -71,8 +71,15 @@ async fn main() {
     axum::serve(listener, router).await.unwrap();
 }
 
-async fn handle(Host(host): Host, State(app): State<App>, req: Request) -> Response {
+async fn handle(State(app): State<App>, req: Request) -> Response {
     let path = req.uri().path().to_string();
+
+    let host = req
+        .headers()
+        .get("host")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
 
     let Some(bucket) = app.config.resolve_bucket(&host) else {
         warn!(host = %host, "no bucket configured");
