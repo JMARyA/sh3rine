@@ -6,9 +6,6 @@ trigger:
   on_pr:
     target: [main]
 
-sandbox_defaults:
-  network: false
-
 vars:
   RUST_BACKTRACE: "1"
   CARGO_TERM_COLOR: always
@@ -16,6 +13,7 @@ vars:
 steps:
   - name: check
     env: .moira/envs/rust.nix
+    network: true
     run: cargo check --workspace
 
   - name: test
