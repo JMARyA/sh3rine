@@ -12,8 +12,6 @@ shellHook = ''
     ]
   }
   EOF
-
-  export CONTAINERS_POLICY_JSON=$PWD/.containers-policy.json
 '';
 
 }
