@@ -1,4 +1,5 @@
 mod config;
+mod errors;
 mod resolve;
 
 use std::{sync::Arc, time::Duration};
@@ -83,43 +84,61 @@ async fn handle(State(app): State<App>, req: Request) -> Response {
 
     let Some(bucket) = app.config.resolve_bucket(&host) else {
         warn!(host = %host, "no bucket configured");
-        return (StatusCode::NOT_FOUND, "not found\n").into_response();
+        return errors::no_host(&host);
     };
 
     let Some(candidates) = resolve::candidates(&path) else {
-        return (StatusCode::BAD_REQUEST, "invalid path\n").into_response();
+        return errors::bad_request(&path);
     };
 
     debug!(host = %host, bucket = %bucket, path = %path, "request");
 
     for key in candidates {
-        if let Some(resp) = fetch(&app, &bucket, &key, StatusCode::OK).await {
-            return resp;
+        match fetch(&app, &bucket, &key, StatusCode::OK).await {
+            FetchResult::Hit(resp) => return resp,
+            FetchResult::Err => {
+                warn!(bucket = %bucket, key = %key, "upstream error");
+                return errors::server_error();
+            }
+            FetchResult::Miss => {}
         }
     }
 
     // Bucket-level 404 page
-    if let Some(resp) = fetch(&app, &bucket, "404.html", StatusCode::NOT_FOUND).await {
+    if let FetchResult::Hit(resp) = fetch(&app, &bucket, "404.html", StatusCode::NOT_FOUND).await {
         return resp;
     }
 
-    (StatusCode::NOT_FOUND, "404 not found\n").into_response()
+    errors::not_found(&path)
 }
 
-async fn fetch(app: &App, bucket: &str, key: &str, status: StatusCode) -> Option<Response> {
+enum FetchResult {
+    Hit(Response),
+    Miss,
+    Err,
+}
+
+async fn fetch(app: &App, bucket: &str, key: &str, status: StatusCode) -> FetchResult {
     let cache_key = format!("{bucket}/{key}");
     let max_bytes = app.config.cache_max_bytes;
 
     if let Some(hit) = app.cache.get(&cache_key).await {
         debug!("cache HIT {cache_key}");
-        return Some(buffered_response(app, status, hit.content_type, hit.body, true));
+        return FetchResult::Hit(buffered_response(app, status, hit.content_type, hit.body, true));
     }
 
     let url = format!("{}/{}/{}", app.config.endpoint, bucket, key);
-    let resp = app.client.get(&url).send().await.ok()?;
+    let resp = match app.client.get(&url).send().await {
+        Ok(r) => r,
+        Err(_) => return FetchResult::Err,
+    };
+
+    if resp.status().is_server_error() {
+        return FetchResult::Err;
+    }
 
     if !resp.status().is_success() {
-        return None;
+        return FetchResult::Miss;
     }
 
     // Stream large files — avoid buffering the full body before the first byte goes out.
@@ -127,10 +146,13 @@ async fn fetch(app: &App, bucket: &str, key: &str, status: StatusCode) -> Option
     if resp.content_length().map_or(false, |len| len > max_bytes) {
         let ct = resolve::content_type(key, &[]);
         debug!("streaming {cache_key}");
-        return Some(streaming_response(app, status, &ct, resp));
+        return FetchResult::Hit(streaming_response(app, status, &ct, resp));
     }
 
-    let body = resp.bytes().await.ok()?;
+    let body = match resp.bytes().await {
+        Ok(b) => b,
+        Err(_) => return FetchResult::Err,
+    };
     let ct_str = resolve::content_type(key, &body);
     let ct = HeaderValue::from_str(&ct_str).unwrap_or(HeaderValue::from_static("application/octet-stream"));
 
@@ -140,7 +162,7 @@ async fn fetch(app: &App, bucket: &str, key: &str, status: StatusCode) -> Option
             .await;
     }
 
-    Some(buffered_response(app, status, ct, body, false))
+    FetchResult::Hit(buffered_response(app, status, ct, body, false))
 }
 
 fn buffered_response(app: &App, status: StatusCode, content_type: HeaderValue, body: Bytes, cached: bool) -> Response {
