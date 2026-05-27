@@ -13,6 +13,8 @@ pub struct HostPattern {
 pub struct Config {
     pub endpoint: String,
     pub listen: String,
+    /// Separate listen address for the /metrics endpoint. None = metrics disabled.
+    pub metrics_listen: Option<String>,
     /// Exact hostname → bucket
     pub hosts: HashMap<String, String>,
     /// Regex patterns with named groups interpolated into bucket template
@@ -67,6 +69,7 @@ impl Config {
         Ok(Config {
             endpoint,
             listen,
+            metrics_listen: std::env::var("METRICS_LISTEN").ok(),
             hosts,
             host_patterns,
             cache_max_mb: env_parse("CACHE_MAX_MB", 128)?,

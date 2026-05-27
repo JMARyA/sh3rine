@@ -30,6 +30,7 @@ All config via environment variables.
 | `CACHE_MAX_FILE_KB` | `512` | Files larger than this are streamed, not cached |
 | `S3_TIMEOUT_SECS` | `15` | Per-request timeout for S3 fetches |
 | `CACHE_CONTROL` | — | Value for `Cache-Control` response header (e.g. `public, max-age=300`) |
+| `METRICS_LISTEN` | — | Bind address for the Prometheus `/metrics` endpoint (e.g. `0.0.0.0:9090`). Disabled if unset. |
 | `RUST_LOG` | — | Log level (`info`, `debug`, etc.) |
 
 ### Host mapping examples
@@ -83,3 +84,33 @@ RUST_LOG=info \
 | Header | Values | Meaning |
 |---|---|---|
 | `x-sh3rine-cache` | `HIT` / `MISS` / `STREAM` | Whether the response came from cache |
+
+## Observability
+
+### Logs
+
+Set `RUST_LOG=info` for one structured log line per request:
+
+```
+host=jmarya.me bucket=jmarya-me path=/blog/post status=200 cache=HIT duration_ms=1
+```
+
+Set `RUST_LOG=debug` to also see individual S3 key candidates being tried, cache operations, and streaming decisions.
+
+### Prometheus metrics
+
+Set `METRICS_LISTEN=0.0.0.0:9090` to enable the `/metrics` endpoint. Keep this port off the public-facing listener — configure your ingress or firewall accordingly.
+
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `sh3rine_requests_total` | Counter | `bucket`, `status`, `cache` | All requests handled |
+| `sh3rine_request_duration_seconds` | Histogram | `bucket`, `cache` | End-to-end request latency |
+| `sh3rine_upstream_requests_total` | Counter | `bucket`, `result` | S3 fetches (`hit`, `miss`, `timeout`, `connect_error`, `server_error`, `read_error`) |
+| `sh3rine_upstream_duration_seconds` | Histogram | `bucket` | S3 fetch latency (excludes cache hits) |
+| `sh3rine_cache_entries` | Gauge | — | Current number of cached entries |
+| `sh3rine_cache_size_bytes` | Gauge | — | Current weighted cache size in bytes |
+| `sh3rine_cache_max_bytes` | Gauge | — | Configured cache cap in bytes |
+
+### Grafana
+
+A ready-to-import dashboard is at [`grafana/dashboard.json`](grafana/dashboard.json). Import it via **Dashboards → Import → Upload JSON file** and point it at your Prometheus datasource.
