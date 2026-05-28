@@ -19,6 +19,7 @@ use reqwest::Client;
 use tracing::{debug, info, warn};
 
 use config::Config;
+use errors::UpstreamError;
 
 #[derive(Clone)]
 struct Cached {
@@ -142,8 +143,9 @@ async fn handle(State(app): State<App>, req: Request) -> Response {
 
     debug!(host = %host, bucket = %bucket, path = %path, "resolving");
 
-    for key in candidates {
-        match fetch(&app, &bucket, &key, StatusCode::OK).await {
+    // Borrow candidates so we still have them for the not_found detail block.
+    for key in &candidates {
+        match fetch(&app, &bucket, key, StatusCode::OK).await {
             FetchResult::Hit(resp, cache_status) => {
                 record_request(&bucket, resp.status().as_u16(), cache_status, start);
                 info!(
@@ -154,7 +156,7 @@ async fn handle(State(app): State<App>, req: Request) -> Response {
                 );
                 return resp;
             }
-            FetchResult::Err => {
+            FetchResult::Err(ref e) => {
                 // warn already emitted inside fetch(); emit a request-level line too.
                 record_request(&bucket, 500, "ERR", start);
                 info!(
@@ -162,7 +164,7 @@ async fn handle(State(app): State<App>, req: Request) -> Response {
                     status = 500u16, cache = "ERR",
                     duration_ms = start.elapsed().as_millis(),
                 );
-                return errors::server_error();
+                return errors::server_error(&bucket, key, e);
             }
             FetchResult::Miss => {}
         }
@@ -173,7 +175,7 @@ async fn handle(State(app): State<App>, req: Request) -> Response {
         if let FetchResult::Hit(r, cs) = fetch(&app, &bucket, "404.html", StatusCode::NOT_FOUND).await {
             (r, cs)
         } else {
-            (errors::not_found(&path), "MISS")
+            (errors::not_found(&path, &candidates), "MISS")
         };
 
     record_request(&bucket, 404, cache_status, start);
@@ -216,7 +218,7 @@ fn record_upstream(bucket: &str, result: &'static str, elapsed: f64) {
 enum FetchResult {
     Hit(Response, &'static str), // (response, cache: "HIT" | "MISS" | "STREAM")
     Miss,
-    Err,
+    Err(UpstreamError),
 }
 
 async fn fetch(app: &App, bucket: &str, key: &str, status: StatusCode) -> FetchResult {
@@ -239,20 +241,20 @@ async fn fetch(app: &App, bucket: &str, key: &str, status: StatusCode) -> FetchR
     let resp = match app.client.get(&url).send().await {
         Ok(r) => r,
         Err(e) => {
-            let elapsed = t0.elapsed().as_secs_f64();
-            let kind = if e.is_timeout() { "timeout" } else { "connect_error" };
-            warn!(bucket = %bucket, key = %key, kind, "upstream fetch failed");
-            record_upstream(bucket, kind, elapsed);
-            return FetchResult::Err;
+            let err = if e.is_timeout() { UpstreamError::Timeout } else { UpstreamError::Connect };
+            warn!(bucket = %bucket, key = %key, kind = err.metric_label(), "upstream fetch failed");
+            record_upstream(bucket, err.metric_label(), t0.elapsed().as_secs_f64());
+            return FetchResult::Err(err);
         }
     };
 
     let s3_status = resp.status();
 
     if s3_status.is_server_error() {
+        let err = UpstreamError::ServerError(s3_status.as_u16());
         warn!(bucket = %bucket, key = %key, status = s3_status.as_u16(), "upstream server error");
-        record_upstream(bucket, "server_error", t0.elapsed().as_secs_f64());
-        return FetchResult::Err;
+        record_upstream(bucket, err.metric_label(), t0.elapsed().as_secs_f64());
+        return FetchResult::Err(err);
     }
 
     if !s3_status.is_success() {
@@ -274,9 +276,10 @@ async fn fetch(app: &App, bucket: &str, key: &str, status: StatusCode) -> FetchR
     let body = match resp.bytes().await {
         Ok(b) => b,
         Err(_) => {
+            let err = UpstreamError::ReadBody;
             warn!(bucket = %bucket, key = %key, "failed to read upstream body");
-            record_upstream(bucket, "read_error", t0.elapsed().as_secs_f64());
-            return FetchResult::Err;
+            record_upstream(bucket, err.metric_label(), t0.elapsed().as_secs_f64());
+            return FetchResult::Err(err);
         }
     };
 

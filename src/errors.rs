@@ -3,6 +3,35 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
+/// Typed upstream failure — used both for error pages and for metrics labels.
+pub enum UpstreamError {
+    Timeout,
+    Connect,
+    ServerError(u16),
+    ReadBody,
+}
+
+impl UpstreamError {
+    /// Prometheus-safe label value.
+    pub fn metric_label(&self) -> &'static str {
+        match self {
+            Self::Timeout => "timeout",
+            Self::Connect => "connect_error",
+            Self::ServerError(_) => "server_error",
+            Self::ReadBody => "read_error",
+        }
+    }
+
+    fn description(&self) -> String {
+        match self {
+            Self::Timeout => "The request to upstream storage timed out.".into(),
+            Self::Connect => "Could not connect to upstream storage.".into(),
+            Self::ServerError(s) => format!("Upstream storage returned HTTP {s}."),
+            Self::ReadBody => "Failed to read the response body from upstream storage.".into(),
+        }
+    }
+}
+
 const CSS: &str = "\
 *{box-sizing:border-box;margin:0;padding:0}\
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;\
@@ -18,10 +47,11 @@ letter-spacing:-0.05em;text-shadow:0 0 40px #6e0000,0 2px 0 #1a0000}\
 .desc{color:#6b4040;font-size:.9375rem;line-height:1.7}\
 .detail{margin-top:1.25rem;padding:.75rem 1rem;background:#110000;\
 border:1px solid #3d0000;border-radius:.25rem;text-align:left}\
+.detail+.detail{margin-top:.5rem}\
 .detail-label{font-size:.6875rem;text-transform:uppercase;letter-spacing:.06em;\
 color:#5a2a2a;margin-bottom:.3rem;font-family:inherit}\
 .detail-value{font-family:'SF Mono','Fira Code',monospace;font-size:.8125rem;\
-color:#cc3333;word-break:break-all}\
+color:#cc3333;word-break:break-all;white-space:pre-wrap}\
 a.home{display:inline-block;margin-top:2rem;padding:.5625rem 1.5rem;\
 background:#0d0000;color:#bb2222;text-decoration:none;border-radius:.25rem;\
 font-size:.875rem;font-weight:500;border:1px solid #5a0000;letter-spacing:.02em}\
@@ -34,15 +64,21 @@ fn escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
-fn page(code: u16, title: &str, desc: &str, detail_label: Option<&str>, detail: Option<&str>) -> String {
-    let detail_block = match (detail_label, detail) {
-        (Some(label), Some(val)) => format!(
-            "<div class=\"detail\"><div class=\"detail-label\">{label}</div>\
-             <div class=\"detail-value\">{}</div></div>",
-            escape(val)
-        ),
-        _ => String::new(),
-    };
+/// Render an error page. `details` is a list of (label, value) pairs;
+/// values are escaped and rendered in a monospace block that preserves newlines.
+fn page(code: u16, title: &str, desc: &str, details: &[(&str, &str)]) -> String {
+    let detail_blocks: String = details
+        .iter()
+        .map(|(label, val)| {
+            format!(
+                "<div class=\"detail\">\
+                 <div class=\"detail-label\">{label}</div>\
+                 <div class=\"detail-value\">{}</div>\
+                 </div>",
+                escape(val)
+            )
+        })
+        .collect();
 
     format!(
         "<!doctype html><html lang=\"en\"><head>\
@@ -56,7 +92,7 @@ fn page(code: u16, title: &str, desc: &str, detail_label: Option<&str>, detail: 
            <div class=\"bar\"></div>\
            <div class=\"title\">{title}</div>\
            <p class=\"desc\">{desc}</p>\
-           {detail_block}\
+           {detail_blocks}\
            <a class=\"home\" href=\"/\">&#8592; Go home</a>\
          </div></body></html>",
     )
@@ -71,19 +107,24 @@ fn html_resp(status: StatusCode, body: String) -> Response {
         .into_response()
 }
 
-pub fn not_found(path: &str) -> Response {
+/// 404 — shows the request path and the S3 keys that were actually tried.
+pub fn not_found(path: &str, tried: &[String]) -> Response {
+    let tried_str = tried.join("\n");
     html_resp(
         StatusCode::NOT_FOUND,
         page(
             404,
             "Page Not Found",
-            "The page you&#8217;re looking for doesn&#8217;t exist or has been moved.",
-            Some("Requested path"),
-            Some(path),
+            "The page you&#8217;re looking for doesn&#8217;t exist in this bucket.",
+            &[
+                ("Requested path", path),
+                ("Keys tried", &tried_str),
+            ],
         ),
     )
 }
 
+/// 404 — unknown hostname, no bucket mapping found.
 pub fn no_host(host: &str) -> Response {
     html_resp(
         StatusCode::NOT_FOUND,
@@ -91,12 +132,12 @@ pub fn no_host(host: &str) -> Response {
             404,
             "No Site Configured",
             "No site is configured for this hostname. Check the server configuration.",
-            Some("Hostname"),
-            Some(host),
+            &[("Hostname", host)],
         ),
     )
 }
 
+/// 400 — path traversal rejected.
 pub fn bad_request(path: &str) -> Response {
     html_resp(
         StatusCode::BAD_REQUEST,
@@ -104,22 +145,24 @@ pub fn bad_request(path: &str) -> Response {
             400,
             "Bad Request",
             "The requested path is not valid. Path traversal sequences (&#8220;..&#8221;) are not permitted.",
-            Some("Rejected path"),
-            Some(path),
+            &[("Rejected path", path)],
         ),
     )
 }
 
-pub fn server_error() -> Response {
+/// 500 — upstream fetch failed. Shows what went wrong and which key was being fetched.
+pub fn server_error(bucket: &str, key: &str, err: &UpstreamError) -> Response {
+    let s3_key = format!("{bucket}/{key}");
     html_resp(
         StatusCode::INTERNAL_SERVER_ERROR,
         page(
             500,
             "Server Error",
-            "An error occurred while fetching the resource from upstream storage. \
-             Please try again later or contact the site administrator.",
-            None,
-            None,
+            "An error occurred while fetching content from upstream storage.",
+            &[
+                ("Reason", &err.description()),
+                ("Key", &s3_key),
+            ],
         ),
     )
 }
