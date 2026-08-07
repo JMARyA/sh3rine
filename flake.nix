@@ -88,5 +88,15 @@
           packages = [ pkgs.rust-analyzer ];
         };
       }
-    ));
+    ))
+    // {
+      # System-agnostic, so it lives outside eachDefaultSystem — moira reads it
+      # as `.#moiraFlake`. `.moira/publish.yaml` declares
+      # `needs_flake: packages.dockerImage`; declaring the spec is what turns
+      # that into an evaluated, scheduled derivation graph instead of an
+      # on-demand `nix build` inside the push step.
+      moiraFlake = {
+        include = [ "packages.*" ];
+      };
+    };
 }
