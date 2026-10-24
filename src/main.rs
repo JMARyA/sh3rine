@@ -16,7 +16,8 @@ use bytes::Bytes;
 use metrics_exporter_prometheus::PrometheusBuilder;
 use moka::future::Cache;
 use reqwest::Client;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
 use config::Config;
 use errors::UpstreamError;
@@ -36,9 +37,29 @@ struct App {
     cache: Cache<String, Cached>,
 }
 
-#[tokio::main]
-async fn main() {
-    tracing_subscriber::fmt::init();
+fn main() {
+    // Sentry is initialised before the runtime so the panic hook and transport
+    // outlive every task. With SENTRY_DSN unset the client stays disabled.
+    // SENTRY_ENVIRONMENT selects the environment (default: development/production).
+    let mut sentry_opts = sentry::ClientOptions::default();
+    sentry_opts.release = option_env!("SH3RINE_RELEASE").map(Into::into);
+    let _sentry = sentry::init(sentry_opts);
+
+    // EnvFilter only gates stdout; the Sentry layer sees warn/error regardless
+    // of RUST_LOG (errors → events, warnings → breadcrumbs).
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer().with_filter(EnvFilter::from_default_env()))
+        .with(sentry::integrations::tracing::layer())
+        .init();
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("failed to build tokio runtime")
+        .block_on(serve());
+}
+
+async fn serve() {
 
     let config = Config::from_env().expect("bad config");
     let listen = config.listen.clone();
@@ -242,7 +263,7 @@ async fn fetch(app: &App, bucket: &str, key: &str, status: StatusCode) -> FetchR
         Ok(r) => r,
         Err(e) => {
             let err = if e.is_timeout() { UpstreamError::Timeout } else { UpstreamError::Connect };
-            warn!(bucket = %bucket, key = %key, kind = err.metric_label(), "upstream fetch failed");
+            error!(bucket = %bucket, key = %key, kind = err.metric_label(), "upstream fetch failed");
             record_upstream(bucket, err.metric_label(), t0.elapsed().as_secs_f64());
             return FetchResult::Err(err);
         }
@@ -252,7 +273,7 @@ async fn fetch(app: &App, bucket: &str, key: &str, status: StatusCode) -> FetchR
 
     if s3_status.is_server_error() {
         let err = UpstreamError::ServerError(s3_status.as_u16());
-        warn!(bucket = %bucket, key = %key, status = s3_status.as_u16(), "upstream server error");
+        error!(bucket = %bucket, key = %key, status = s3_status.as_u16(), "upstream server error");
         record_upstream(bucket, err.metric_label(), t0.elapsed().as_secs_f64());
         return FetchResult::Err(err);
     }
@@ -277,7 +298,7 @@ async fn fetch(app: &App, bucket: &str, key: &str, status: StatusCode) -> FetchR
         Ok(b) => b,
         Err(_) => {
             let err = UpstreamError::ReadBody;
-            warn!(bucket = %bucket, key = %key, "failed to read upstream body");
+            error!(bucket = %bucket, key = %key, "failed to read upstream body");
             record_upstream(bucket, err.metric_label(), t0.elapsed().as_secs_f64());
             return FetchResult::Err(err);
         }
