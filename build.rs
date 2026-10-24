@@ -14,6 +14,10 @@ fn git(args: &[&str]) -> Option<String> {
 
 fn main() {
     println!("cargo::rerun-if-env-changed=SH3RINE_COMMIT");
+    // Edits to tracked sources flip the dirty flag without touching .git.
+    for p in ["src", "build.rs", "Cargo.toml", "Cargo.lock"] {
+        println!("cargo::rerun-if-changed={p}");
+    }
 
     let release = match std::env::var("SH3RINE_COMMIT") {
         Ok(c) if !c.is_empty() => Some(c),

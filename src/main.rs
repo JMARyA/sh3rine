@@ -43,6 +43,9 @@ fn main() {
     // SENTRY_ENVIRONMENT selects the environment (default: development/production).
     let mut sentry_opts = sentry::ClientOptions::default();
     sentry_opts.release = option_env!("SH3RINE_RELEASE").map(Into::into);
+    // The SDK marks its own panic-handler frames in_app; keep culprits in sh3rine.
+    sentry_opts.in_app_include = vec!["sh3rine"];
+    sentry_opts.in_app_exclude = vec!["sentry", "std", "core"];
     let _sentry = sentry::init(sentry_opts);
 
     // EnvFilter only gates stdout; the Sentry layer sees warn/error regardless
