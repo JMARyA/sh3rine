@@ -5,6 +5,11 @@ trigger:
     branches: [main]
   manual: true
 
+# k0 is amd64, and packages.dockerImage builds for the agent's own system.
+agent:
+  labels:
+    system: x86_64-linux
+
 needs_flake:
   - packages.dockerImage
 
