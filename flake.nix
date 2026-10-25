@@ -49,6 +49,8 @@
           commonArgs
           // {
             inherit cargoArtifacts;
+            # No .git in the cleaned source; build.rs turns this into SH3RINE_RELEASE.
+            SH3RINE_COMMIT = self.rev or self.dirtyRev or "";
           }
         );
 

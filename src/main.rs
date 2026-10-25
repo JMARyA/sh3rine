@@ -38,21 +38,25 @@ struct App {
 }
 
 fn main() {
-    // Sentry is initialised before the runtime so the panic hook and transport
-    // outlive every task. With SENTRY_DSN unset the client stays disabled.
-    // SENTRY_ENVIRONMENT selects the environment (default: development/production).
-    let mut sentry_opts = sentry::ClientOptions::default();
-    sentry_opts.release = option_env!("SH3RINE_RELEASE").map(Into::into);
-    // The SDK marks its own panic-handler frames in_app; keep culprits in sh3rine.
-    sentry_opts.in_app_include = vec!["sh3rine"];
-    sentry_opts.in_app_exclude = vec!["sentry", "std", "core"];
-    let _sentry = sentry::init(sentry_opts);
+    // Error reporting is opt-in: without a non-empty SENTRY_DSN the SDK is never
+    // initialised and no tracing layer is installed, so nothing leaves the process.
+    // When enabled it is initialised before the runtime so the panic hook and
+    // transport outlive every task. SENTRY_ENVIRONMENT selects the environment.
+    let sentry_enabled = std::env::var("SENTRY_DSN").is_ok_and(|d| !d.trim().is_empty());
+    let _sentry = sentry_enabled.then(|| {
+        let mut sentry_opts = sentry::ClientOptions::default();
+        sentry_opts.release = option_env!("SH3RINE_RELEASE").map(Into::into);
+        // The SDK marks its own panic-handler frames in_app; keep culprits in sh3rine.
+        sentry_opts.in_app_include = vec!["sh3rine"];
+        sentry_opts.in_app_exclude = vec!["sentry", "std", "core"];
+        sentry::init(sentry_opts)
+    });
 
     // EnvFilter only gates stdout; the Sentry layer sees warn/error regardless
     // of RUST_LOG (errors → events, warnings → breadcrumbs).
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer().with_filter(EnvFilter::from_default_env()))
-        .with(sentry::integrations::tracing::layer())
+        .with(sentry_enabled.then(sentry::integrations::tracing::layer))
         .init();
 
     tokio::runtime::Builder::new_multi_thread()

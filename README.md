@@ -32,6 +32,8 @@ All config via environment variables.
 | `CACHE_CONTROL` | — | Value for `Cache-Control` response header (e.g. `public, max-age=300`) |
 | `METRICS_LISTEN` | — | Bind address for the Prometheus `/metrics` endpoint (e.g. `0.0.0.0:9090`). Disabled if unset. |
 | `RUST_LOG` | — | Log level (`info`, `debug`, etc.) |
+| `SENTRY_DSN` | — | Sentry-compatible DSN (e.g. Hegel). **Error reporting is off unless this is set.** |
+| `SENTRY_ENVIRONMENT` | `production` (release builds) | Environment tag on reported events |
 
 ### Host mapping examples
 
@@ -96,6 +98,12 @@ host=jmarya.me bucket=jmarya-me path=/blog/post status=200 cache=HIT duration_ms
 ```
 
 Set `RUST_LOG=debug` to also see individual S3 key candidates being tried, cache operations, and streaming decisions.
+
+### Error reporting (opt-in)
+
+Disabled by default. No DSN is compiled into the binary or image, and with `SENTRY_DSN` unset or empty the Sentry SDK is never initialised, so no events leave the process.
+
+Set `SENTRY_DSN` to turn it on. Then `error`-level logs (S3 connect/timeout failures, S3 5xx, body read failures) and panics are reported as events, and `warn`/`info` logs ride along as breadcrumbs. 404s and other upstream misses are logged at `debug` and never reported. Events carry `release = sh3rine@<commit>`. Nix builds take the commit from the flake's `self.rev` (`-dirty` suffix for uncommitted trees).
 
 ### Prometheus metrics
 
